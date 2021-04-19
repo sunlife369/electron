@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rune Lillesveen <futhark@chromium.org>
+Date: Wed, 31 Mar 2021 22:48:56 +0000
+Subject: Don't erase InterpolationTypes used by other documents
+
+A registered custom property in one document caused the entry for the
+same custom property (unregistered) used in another document to be
+deleted, which caused a use-after-free.
+
+Only store the CSSDefaultInterpolationType for unregistered custom
+properties and never store registered properties in the map. They may
+have different types in different documents when registered.
+
+(cherry picked from commit ea0f74c3dfef5f864aba149ae33e4ea6360e9abb)
+
+Bug: 1192054
+Change-Id: I1af03d0a298795db99acc9c62f0d0fff8a5e801d
+Reviewed-on: https://chromium-review.googlesource.com/c/chromium/src/+/2792423
+Commit-Queue: Rune Lillesveen <futhark@chromium.org>
+Reviewed-by: Robert Flack <flackr@chromium.org>
+Cr-Original-Commit-Position: refs/heads/master@{#867692}
+Reviewed-on: https://chromium-review.googlesource.com/c/chromium/src/+/2797576
+Auto-Submit: Rune Lillesveen <futhark@chromium.org>
+Cr-Commit-Position: refs/branch-heads/4430@{#962}
+Cr-Branched-From: e5ce7dc4f7518237b3d9bb93cccca35d25216cbe-refs/heads/master@{#857950}
+
+diff --git a/third_party/blink/renderer/core/animation/css_interpolation_types_map.cc b/third_party/blink/renderer/core/animation/css_interpolation_types_map.cc
+index 0dbbc626a3fe302fbbee3987e86431efb87cf3d2..8fa2a72051051b8829a6d4cd5415e83ac6ef4766 100644
+--- a/third_party/blink/renderer/core/animation/css_interpolation_types_map.cc
++++ b/third_party/blink/renderer/core/animation/css_interpolation_types_map.cc
+@@ -83,28 +83,22 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
+   DEFINE_STATIC_LOCAL(ApplicableTypesMap, all_applicable_types_map, ());
+   DEFINE_STATIC_LOCAL(ApplicableTypesMap, composited_applicable_types_map, ());
+ 
+-  ApplicableTypesMap& applicable_types_map =
+-      allow_all_animations_ ? all_applicable_types_map
+-                            : composited_applicable_types_map;
+-
+-  auto entry = applicable_types_map.find(property);
+-  bool found_entry = entry != applicable_types_map.end();
+-
+   // Custom property interpolation types may change over time so don't trust the
+-  // applicableTypesMap without checking the registry.
++  // applicable_types_map without checking the registry. Also since the static
++  // map is shared between documents, the registered type may be different in
++  // the different documents.
+   if (registry_ && property.IsCSSCustomProperty()) {
+-    const auto* registration = GetRegistration(registry_, property);
+-    if (registration) {
+-      if (found_entry) {
+-        applicable_types_map.erase(entry);
+-      }
++    if (const auto* registration = GetRegistration(registry_, property))
+       return registration->GetInterpolationTypes();
+-    }
+   }
+ 
+-  if (found_entry) {
++  ApplicableTypesMap& applicable_types_map =
++      allow_all_animations_ ? all_applicable_types_map
++                            : composited_applicable_types_map;
++
++  auto entry = applicable_types_map.find(property);
++  if (entry != applicable_types_map.end())
+     return *entry->value;
+-  }
+ 
+   std::unique_ptr<InterpolationTypes> applicable_types =
+       std::make_unique<InterpolationTypes>();
